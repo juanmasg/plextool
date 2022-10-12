@@ -28,6 +28,16 @@ def get_token():
 
         return tk
 
+def get_show_tmdbid(plex_show):
+    try:
+        tmdburi = next(( s for s in plex_show.guids if s.id.startswith("tmdb") ))
+    except StopIteration as si:
+        # No tmdb uri associated
+        return
+
+    tmdbid = int(tmdburi.id.split("/")[-1])
+    return tmdbid
+
 
 class PlexWrapper:
     def __init__(self, host, port):
@@ -47,6 +57,43 @@ class PlexWrapper:
         return shows
 
 
+class TVDBScrapper():
+    
+    def __init__(self, basedir):
+        pass
+        self._cachedir = f"{basedir}/tvdb_cache"
+        if not os.path.exists(self._cachedir):
+            os.makedirs(self._cachedir)
+
+    def get_show_seasons(self, plex_show):
+
+        title = plex_show.originalTitle or plex_show.title
+        cachedpath = f"{self._cachedir}/tvdb-{title}"
+
+        if not os.path.exists(cachedpath):
+            print(f"Retrieving from TVDB {title} to {cachedpath}")
+            r = requests.get(f"https://thetvdb.com/series/{title.replace(' ', '-')}/")
+            with open(cachedpath, "wb") as f:
+                f.write(r.text.encode("utf8"))
+
+        text = open(cachedpath).read()
+        html = lhtml.document_fromstring(text)
+        
+        season_wrappers = html.xpath("//div[@id='tab-official']")[0].xpath(".//li[contains(@class, 'list-group-item')][@data-number]")
+        seasons = {}
+
+        for season_wrapper in season_wrappers:
+            season_elems = [ x.strip() for x in season_wrapper.text_content().split('\n') if x.strip() ]
+            season_epcount, season_name = season_elems[0:2]
+            try:
+                season_number = re.search('\d+', season_name).group(0)
+            except Exception as e:
+                # No season number
+                continue
+
+            seasons[int(season_number)] = int(season_epcount)
+
+        return seasons
 
 class TMDBScrapper():
     def __init__(self, basedir):
@@ -55,7 +102,12 @@ class TMDBScrapper():
         if not os.path.exists(self._cachedir):
             os.makedirs(self._cachedir)
 
-    def get_show_seasons(self, tmdbid):
+    def get_show_seasons(self, plex_show):
+
+        tmdbid = get_show_tmdbid(plex_show)
+        if not tmdbid:
+            return {}
+
         cachedpath = f"{self._cachedir}/tmdb-{tmdbid}"
         if not os.path.exists(cachedpath):
             print(f"Retrieving from TMDB {tmdbid} to {cachedpath}")
@@ -97,7 +149,10 @@ parser = ArgumentParser()
 parser.add_argument("--plex", "-P", help="HOST:PORT", required=True, metavar="HOST:PORT")
 parser.add_argument("--ipy", help="Run ipython at the end")
 parser.add_argument("--list-shows", "-S", help="List all plex shows", action="store_true")
-parser.add_argument("--diff-scrape-tmdb", help="Check missinng episodes by parsing the mdb website", action="store_true")
+parser.add_argument("--tmdb-diff", help="Check missinng episodes by parsing the mdb website", action="store_true")
+parser.add_argument("--tmdb-list", help="List seasons by parsing the mdb website", action="store_true")
+parser.add_argument("--tvdb-diff", help="Check missinng episodes by parsing the tvdb website", action="store_true")
+parser.add_argument("--tvdb-list", help="Check missinng episodes by parsing the tvdb website", action="store_true")
 parser.add_argument("--title", "-t", help="Filter by title")
 
 args = parser.parse_args()
@@ -110,23 +165,34 @@ mydir = f'{os.environ.get("HOME")}/.plextool'
 if not os.path.exists(mydir):
     os.makedirs(mydir)
 
-if args.diff_scrape_tmdb:
+if args.tmdb_list:
     tmdb = TMDBScrapper(mydir)
     for plex_show in plex.shows(title_re=args.title):
-        try:
-            tmdburi = next(( s for s in plex_show.guids if s.id.startswith("tmdb") ))
-        except StopIteration as si:
-            # No tmdb uri associated
-            continue
+        seasons = tmdb.get_show_seasons(plex_show)
+        for index, epcount in seasons.items():
+            print(f"{plex_show.title} - Season {index: 2d} has {epcount: 3d} episodes")
 
-        tmdbid = int(tmdburi.id.split("/")[-1])
+elif args.tvdb_list:
+    tvdb = TVDBScrapper(mydir)
+    for plex_show in plex.shows(title_re=args.title):
+        seasons = tvdb.get_show_seasons(plex_show)
+        for index, epcount in seasons.items():
+            print(f"{plex_show.title} - Season {index: 2d} has {epcount: 3d} episodes")
 
-        for tmdb_season_index, tmdb_season_epcount in tmdb.get_show_seasons(tmdbid).items():
+elif args.tmdb_diff:
+    tmdb = TMDBScrapper(mydir)
+    for plex_show in plex.shows(title_re=args.title):
+
+        for tmdb_season_index, tmdb_season_epcount in tmdb.get_show_seasons(plex_show).items():
+            if tmdb_season_epcount == 0:
+                # Unreleased season
+                continue
+
             try:
                 plex_season = plex_show.season(season=tmdb_season_index)
                 #plex_season = plex_show.season(title=tmdb_season_index)
             except PlexNotFound as nf:
-                print(f"{plex_show.title} Season {tmdb_season_index} is missing.")
+                print(f"{plex_show.title} Season {tmdb_season_index} ({tmdb_season_epcount}) is missing.")
                 continue
             plex_season_epcount = len(plex_season.episodes())
 
@@ -134,6 +200,10 @@ if args.diff_scrape_tmdb:
                 diff = tmdb_season_epcount - plex_season_epcount
                 print(f"{plex_show.title} Season {tmdb_season_index} Missing {diff}/{tmdb_season_epcount} episodes.")
 
+elif args.tvdb_diff:
+    tvdb = TVDBScrapper(mydir)
+    for plex_show in plex.shows(title_re=args.title):
+        tvdb.get_show_seasons(plex_show)
 
 elif args.list_shows:
     shows = plex.shows(title_re=args.title) #plex.library.section("TV Shows").all()
