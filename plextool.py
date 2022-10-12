@@ -147,12 +147,12 @@ class TMDBScrapper():
 
 parser = ArgumentParser()
 parser.add_argument("--plex", "-P", help="HOST:PORT", required=True, metavar="HOST:PORT")
-parser.add_argument("--ipy", help="Run ipython at the end")
+parser.add_argument("--ipy", help="Run ipython at the end", action="store_true")
 parser.add_argument("--list-shows", "-S", help="List all plex shows", action="store_true")
 parser.add_argument("--tmdb-diff", help="Check missinng episodes by parsing the mdb website", action="store_true")
 parser.add_argument("--tmdb-list", help="List seasons by parsing the mdb website", action="store_true")
-parser.add_argument("--tvdb-diff", help="Check missinng episodes by parsing the tvdb website", action="store_true")
-parser.add_argument("--tvdb-list", help="Check missinng episodes by parsing the tvdb website", action="store_true")
+parser.add_argument("--tvdb-diff", help="Check missing episodes by parsing the tvdb website", action="store_true")
+parser.add_argument("--tvdb-list", help="List seasons by parsing the tvdb website", action="store_true")
 parser.add_argument("--title", "-t", help="Filter by title")
 
 args = parser.parse_args()
