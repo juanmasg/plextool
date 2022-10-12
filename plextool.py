@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 
 from plexapi.server import PlexServer
+from plexapi.exceptions import NotFound as PlexNotFound
 from getpass import getpass
 from argparse import ArgumentParser
 import requests
 from lxml import html as lhtml
 import os
 import sys
+import re
+import json
 
 #import tvdb_v4_official as tvdb
 
@@ -26,76 +29,117 @@ def get_token():
         return tk
 
 
-def cache_exists(tmdbid):
-    return os.path.exists(f"{cachedir}/tmdb-{tmdbid}")
+class PlexWrapper:
+    def __init__(self, host, port):
+        self._host = host
+        self._port = port
+
+        self._plex = PlexServer(f"http://{host}:{port}", get_token())
+
+    def shows(self, title_re=None):
+        print("Retrieving all shows...")
+        shows = self._plex.library.section("TV Shows").all()
+        if title_re:
+            print(f"Filtering shows matching '{title_re}'...")
+            title_re = title_re.lower()
+            return [ show for show in shows if re.search(title_re, show.title.lower()) ]
+
+        return shows
+
+
+
+class TMDBScrapper():
+    def __init__(self, basedir):
+        pass
+        self._cachedir = f"{basedir}/tmdb_cache"
+        if not os.path.exists(self._cachedir):
+            os.makedirs(self._cachedir)
+
+    def get_show_seasons(self, tmdbid):
+        cachedpath = f"{self._cachedir}/tmdb-{tmdbid}"
+        if not os.path.exists(cachedpath):
+            print(f"Retrieving from TMDB {tmdbid} to {cachedpath}")
+            r = requests.get(f"https://www.themoviedb.org/tv/{tmdbid}/seasons")
+            with open(cachedpath, "wb") as f:
+                f.write(r.text.encode("utf8"))
+        
+        text = open(cachedpath).read()
+        html = lhtml.document_fromstring(text)
+        
+        season_wrappers = html.xpath('//div[contains(@class, "season_wrapper")]')
+        seasons = {}
+        
+        for season_wrapper in season_wrappers:
+            season_data = [ x.strip() for x in season_wrapper.text_content().split("\n") ]
+            season_data = [ x for x in season_data if x ]
+
+            if season_data[0].startswith("Specials"):
+                continue
+
+            season_epcount = re.search('(\d+) Episodes', season_data[1]).group(1)
+            try:
+                season_number = re.search('\d+', season_data[0]).group(0)
+            except Exception as e:
+                # No season number
+                # FIXME: Match by title
+                continue
+
+            if not season_number:
+                print("Ignoring season", season_data)
+                continue
+
+            seasons[int(season_number)] = int(season_epcount)
+        
+        return seasons
 
 
 parser = ArgumentParser()
 parser.add_argument("--plex", "-P", help="HOST:PORT", required=True, metavar="HOST:PORT")
 parser.add_argument("--ipy", help="Run ipython at the end")
+parser.add_argument("--list-shows", "-S", help="List all plex shows", action="store_true")
+parser.add_argument("--diff-scrape-tmdb", help="Check missinng episodes by parsing the mdb website", action="store_true")
+parser.add_argument("--title", "-t", help="Filter by title")
 
 args = parser.parse_args()
 
-baseurl = f'http://{args.plex}'
+plex = PlexWrapper(*args.plex.split(":"))
 
-plex = PlexServer(baseurl, get_token())
 
 mydir = f'{os.environ.get("HOME")}/.plextool'
-cachedir = f'{mydir}/cache'
 
-if not os.path.exists(cachedir):
-    os.makedirs(cachedir)
+if not os.path.exists(mydir):
+    os.makedirs(mydir)
 
-shows = plex.library.section("TV Shows").all()
+if args.diff_scrape_tmdb:
+    tmdb = TMDBScrapper(mydir)
+    for plex_show in plex.shows(title_re=args.title):
+        try:
+            tmdburi = next(( s for s in plex_show.guids if s.id.startswith("tmdb") ))
+        except StopIteration as si:
+            # No tmdb uri associated
+            continue
 
-while True:
+        tmdbid = int(tmdburi.id.split("/")[-1])
 
-    try:
-        next_show = shows.pop(0)
-        #print("Next?", next_show.title)
-    except IndexError as e:
-        # No more items
-        sys.exit(0)
+        for tmdb_season_index, tmdb_season_epcount in tmdb.get_show_seasons(tmdbid).items():
+            try:
+                plex_season = plex_show.season(season=tmdb_season_index)
+                #plex_season = plex_show.season(title=tmdb_season_index)
+            except PlexNotFound as nf:
+                print(f"{plex_show.title} Season {tmdb_season_index} is missing.")
+                continue
+            plex_season_epcount = len(plex_season.episodes())
 
-    #tvdburi = next(( x for x in next_show.guids if x.id.startswith("tvdb") ))
-    try:
-        tmdburi = next(( x for x in next_show.guids if x.id.startswith("tmdb") ))
-    except StopIteration as e:
-        # Not available
-        print(f"No tmdb for {next_show.title}: {next_show.guids}")
-        continue
+            if plex_season_epcount < tmdb_season_epcount:
+                diff = tmdb_season_epcount - plex_season_epcount
+                print(f"{plex_show.title} Season {tmdb_season_index} Missing {diff}/{tmdb_season_epcount} episodes.")
 
-    tmdbid = int(tmdburi.id.split("/")[-1])
 
-    cachefile = f"{cachedir}/tmdb-{tmdbid}"
+elif args.list_shows:
+    shows = plex.shows(title_re=args.title) #plex.library.section("TV Shows").all()
+    for show in shows:
+        print(show.title)
 
-    if not os.path.exists(cachefile):
-        break
-
-print(f"Title: {next_show.title}")
-#print(f"TVDB: {tvdburi}")
-print(f"TMDB: {tmdburi}")
-
-if not os.path.exists(cachefile):
-    r = requests.get(f"https://www.themoviedb.org/tv/{tmdbid}/seasons")
-    with open(cachefile, "wb") as f:
-        f.write(r.text.encode("utf8"))
-
-    html = lhtml.document_fromstring(r.text)
-else:
-    text = open(cachefile).read()
-    html = lhtml.document_fromstring(text)
-
-season_wrappers = html.xpath('//div[contains(@class, "season_wrapper")]')
-
-for season in season_wrappers:
-    season_strip = [ x.strip() for x in season.text_content().split("\n") ]
-    season_strip = [ x for x in season_strip if x ]
-
-    print(season_strip[0:2])
-
-#print([ x.strip() for x in html.xpath('//div[contains(@class, "season_wrapper")]')[1].text_content().split('\n') if x.strip()][0:2])
-#['Day 1', '2001 | 24 Episodes']
 
 if args.ipy:
     import IPython; IPython.embed()
