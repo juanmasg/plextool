@@ -156,6 +156,7 @@ parser.add_argument("--tmdb", help="Check against tmdb", action="store_true")
 parser.add_argument("--tvdb", help="Check against tvdb", action="store_true")
 parser.add_argument("--diff", help="Print missing seasons/episodes", action="store_true")
 parser.add_argument("--list", help="Print season information", action="store_true")
+parser.add_argument("--report", help="Print completeness summary", action="store_true")
 parser.add_argument("--title", "-t", help="Filter by title")
 
 args = parser.parse_args()
@@ -208,6 +209,23 @@ elif args.diff:
                 continue
 
             print(f"{show.title} Season {db_idx} is complete ({db_epcount})")
+
+elif args.report:
+    for show in plex.shows(title_re=args.title):
+        db_seasons = db.get_show_seasons(show)
+        plex_seasons = plex.get_show_seasons(show)
+
+        db_epcount = sum(db_seasons.values())
+        plex_epcount = sum([len(x) for x in plex_seasons.values()])
+
+        if db_epcount > 0:
+            print(f"{show.title} completed status is {plex_epcount/db_epcount*100: 3.0f}%")
+        else:
+            print(f"{show.title} db_epcount is zero1 {db_seasons}")
+
+
+
+
             
 
 elif args.list_shows:
