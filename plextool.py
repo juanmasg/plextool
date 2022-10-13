@@ -38,6 +38,11 @@ def get_show_tmdbid(plex_show):
     tmdbid = int(tmdburi.id.split("/")[-1])
     return tmdbid
 
+def epstr(season, episode, eur=True):
+    if eur:
+        return f'{season}x{episode:02d}'
+    else:
+        return f's{season}e{episode:02d}'
 
 class PlexWrapper:
     def __init__(self, host, port):
@@ -151,6 +156,7 @@ class TMDBScrapper():
 parser = ArgumentParser()
 parser.add_argument("--plex", "-P", help="HOST:PORT", required=True, metavar="HOST:PORT")
 parser.add_argument("--ipy", help="Run ipython at the end", action="store_true")
+parser.add_argument("--int", "-I", help="Use internacional naming (e.g sXXeYY) ", action="store_true")
 parser.add_argument("--list-shows", "-S", help="List all plex shows", action="store_true")
 parser.add_argument("--tmdb", help="Check against tmdb", action="store_true")
 parser.add_argument("--tvdb", help="Check against tvdb", action="store_true")
@@ -203,7 +209,7 @@ elif args.diff:
             #diff = db_eps - plex_eps
             diff = [ x for x in db_eps if x not in plex_eps ]
             if diff:
-                missing = ", ".join([ f'{db_idx}x{x:02d}' for x in diff])
+                missing = ", ".join([ epstr(db_idx, x, eur=not args.int) for x in diff])
                 print(f"{show.title} Season {db_idx} missing {len(diff)}/{db_epcount} episodes: {missing}")
                 all_seasons_ok = False
                 continue
@@ -224,14 +230,10 @@ elif args.report:
             print(f"{show.title} db_epcount is zero1 {db_seasons}")
 
 
-
-
-            
-
 elif args.list_shows:
     shows = plex.shows(title_re=args.title) #plex.library.section("TV Shows").all()
     for show in shows:
-        print(show.title)
+        print(f"{show.title} has {len(show.seasons())} seasons and {sum([ len(s.episodes()) for s in show.seasons() ])} episodes.")
 
 
 if args.ipy:
