@@ -56,6 +56,9 @@ class PlexWrapper:
 
         return shows
 
+    def get_show_seasons(self, plex_show):
+        return { s.index: [e.index for e in s.episodes()] for s in plex_show.seasons() }
+
 
 class TVDBScrapper():
     
@@ -120,7 +123,7 @@ class TMDBScrapper():
         
         season_wrappers = html.xpath('//div[contains(@class, "season_wrapper")]')
         seasons = {}
-        
+
         for season_wrapper in season_wrappers:
             season_data = [ x.strip() for x in season_wrapper.text_content().split("\n") ]
             season_data = [ x for x in season_data if x ]
@@ -149,61 +152,63 @@ parser = ArgumentParser()
 parser.add_argument("--plex", "-P", help="HOST:PORT", required=True, metavar="HOST:PORT")
 parser.add_argument("--ipy", help="Run ipython at the end", action="store_true")
 parser.add_argument("--list-shows", "-S", help="List all plex shows", action="store_true")
-parser.add_argument("--tmdb-diff", help="Check missinng episodes by parsing the mdb website", action="store_true")
-parser.add_argument("--tmdb-list", help="List seasons by parsing the mdb website", action="store_true")
-parser.add_argument("--tvdb-diff", help="Check missing episodes by parsing the tvdb website", action="store_true")
-parser.add_argument("--tvdb-list", help="List seasons by parsing the tvdb website", action="store_true")
+parser.add_argument("--tmdb", help="Check against tmdb", action="store_true")
+parser.add_argument("--tvdb", help="Check against tvdb", action="store_true")
+parser.add_argument("--diff", help="Print missing seasons/episodes", action="store_true")
+parser.add_argument("--list", help="Print season information", action="store_true")
 parser.add_argument("--title", "-t", help="Filter by title")
 
 args = parser.parse_args()
 
 plex = PlexWrapper(*args.plex.split(":"))
 
-
 mydir = f'{os.environ.get("HOME")}/.plextool'
 
 if not os.path.exists(mydir):
     os.makedirs(mydir)
 
-if args.tmdb_list:
-    tmdb = TMDBScrapper(mydir)
-    for plex_show in plex.shows(title_re=args.title):
-        seasons = tmdb.get_show_seasons(plex_show)
+db = None
+if args.tmdb:
+    db = TMDBScrapper(mydir)
+elif args.tvdb:
+    db = TVDBScrapper(mydir)
+
+if args.list:
+    if not db:
+        print("Please enable `--tmdb` or `--tvdb`")
+        sys.exit(1)
+
+    for show in plex.shows(title_re=args.title):
+        seasons = db.get_show_seasons(show)
         for index, epcount in seasons.items():
-            print(f"{plex_show.title} - Season {index: 2d} has {epcount: 3d} episodes")
+            print(f"{show.title} - Season {index: 2d} has {epcount: 3d} episodes")
 
-elif args.tvdb_list:
-    tvdb = TVDBScrapper(mydir)
-    for plex_show in plex.shows(title_re=args.title):
-        seasons = tvdb.get_show_seasons(plex_show)
-        for index, epcount in seasons.items():
-            print(f"{plex_show.title} - Season {index: 2d} has {epcount: 3d} episodes")
+elif args.diff:
+    for show in plex.shows(title_re=args.title):
+        db_seasons = db.get_show_seasons(show)
+        plex_seasons = plex.get_show_seasons(show)
 
-elif args.tmdb_diff:
-    tmdb = TMDBScrapper(mydir)
-    for plex_show in plex.shows(title_re=args.title):
+        all_seasons_ok = True
 
-        for tmdb_season_index, tmdb_season_epcount in tmdb.get_show_seasons(plex_show).items():
-            if tmdb_season_epcount == 0:
-                # Unreleased season
+        for db_idx, db_epcount in db_seasons.items():
+            if db_idx not in plex_seasons:
+                print(f"{show.title} Season {db_idx} ({db_epcount}) is missing.")
+                all_seasons_ok = False
                 continue
 
-            try:
-                plex_season = plex_show.season(season=tmdb_season_index)
-                #plex_season = plex_show.season(title=tmdb_season_index)
-            except PlexNotFound as nf:
-                print(f"{plex_show.title} Season {tmdb_season_index} ({tmdb_season_epcount}) is missing.")
+            db_eps = list(range(1, db_epcount))
+
+            plex_eps = plex_seasons[db_idx]
+            #diff = db_eps - plex_eps
+            diff = [ x for x in db_eps if x not in plex_eps ]
+            if diff:
+                missing = ", ".join([ f'{db_idx}x{x:02d}' for x in diff])
+                print(f"{show.title} Season {db_idx} missing {len(diff)}/{db_epcount} episodes: {missing}")
+                all_seasons_ok = False
                 continue
-            plex_season_epcount = len(plex_season.episodes())
 
-            if plex_season_epcount < tmdb_season_epcount:
-                diff = tmdb_season_epcount - plex_season_epcount
-                print(f"{plex_show.title} Season {tmdb_season_index} Missing {diff}/{tmdb_season_epcount} episodes.")
-
-elif args.tvdb_diff:
-    tvdb = TVDBScrapper(mydir)
-    for plex_show in plex.shows(title_re=args.title):
-        tvdb.get_show_seasons(plex_show)
+            print(f"{show.title} Season {db_idx} is complete ({db_epcount})")
+            
 
 elif args.list_shows:
     shows = plex.shows(title_re=args.title) #plex.library.section("TV Shows").all()
