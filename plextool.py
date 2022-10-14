@@ -51,13 +51,19 @@ class PlexWrapper:
 
         self._plex = PlexServer(f"http://{host}:{port}", get_token())
 
-    def shows(self, title_re=None):
+    def shows(self, title_re=None, collection_not=None):
         print("Retrieving all shows...")
         shows = self._plex.library.section("TV Shows").all()
         if title_re:
             print(f"Filtering shows matching '{title_re}'...")
             title_re = title_re.lower()
-            return [ show for show in shows if re.search(title_re, show.title.lower()) ]
+            shows = [ show for show in shows if re.search(title_re, show.title.lower()) ]
+
+        if collection_not:
+            print(f"Ignoring shows in collection '{collection_not}'...")
+            collection_not = collection_not.lower()
+            shows = [ show for show in shows \
+                if not any((re.search(collection_not, c.tag.lower()) for c in show.collections))]
 
         return shows
 
@@ -164,6 +170,7 @@ parser.add_argument("--diff", help="Print missing seasons/episodes", action="sto
 parser.add_argument("--list", help="Print season information", action="store_true")
 parser.add_argument("--report", help="Print completeness summary", action="store_true")
 parser.add_argument("--title", "-t", help="Filter by title")
+parser.add_argument("--ignore-collection", help="Ignore elements from collection.")
 
 args = parser.parse_args()
 
@@ -185,13 +192,13 @@ if args.list:
         print("Please enable `--tmdb` or `--tvdb`")
         sys.exit(1)
 
-    for show in plex.shows(title_re=args.title):
+    for show in plex.shows(title_re=args.title, collection_not=args.ignore_collection):
         seasons = db.get_show_seasons(show)
         for index, epcount in seasons.items():
             print(f"{show.title} - Season {index: 2d} has {epcount: 3d} episodes")
 
 elif args.diff:
-    for show in plex.shows(title_re=args.title):
+    for show in plex.shows(title_re=args.title, collection_not=args.ignore_collection):
         db_seasons = db.get_show_seasons(show)
         plex_seasons = plex.get_show_seasons(show)
 
@@ -216,8 +223,11 @@ elif args.diff:
 
             print(f"{show.title} Season {db_idx} is complete ({db_epcount})")
 
+        if all_seasons_ok:
+            print(f"Show {show.title} is complete.")
+
 elif args.report:
-    for show in plex.shows(title_re=args.title):
+    for show in plex.shows(title_re=args.title, collection_not=args.ignore_collection):
         db_seasons = db.get_show_seasons(show)
         plex_seasons = plex.get_show_seasons(show)
 
@@ -231,7 +241,7 @@ elif args.report:
 
 
 elif args.list_shows:
-    shows = plex.shows(title_re=args.title) #plex.library.section("TV Shows").all()
+    shows = plex.shows(title_re=args.title, collection_not=args.ignore_collection)
     for show in shows:
         print(f"{show.title} has {len(show.seasons())} seasons and {sum([ len(s.episodes()) for s in show.seasons() ])} episodes.")
 
