@@ -13,6 +13,10 @@ import json
 
 #import tvdb_v4_official as tvdb
 
+def debug(*a, **kw):
+    if args.debug:
+        print(*a, **kw)
+
 def get_token():
     plextkf = os.environ.get("PLEXTKF")
     plextk = os.environ.get("PLEXTK")
@@ -67,8 +71,13 @@ class PlexWrapper:
 
         return shows
 
-    def get_show_seasons(self, plex_show):
-        return { s.index: [e.index for e in s.episodes()] for s in plex_show.seasons() }
+    def get_show_seasons(self, show):
+        for s in show.seasons():
+            debug(s)
+            for e in s.episodes():
+                debug(e)
+
+        return { s.index: [e.index for e in s.episodes()] for s in show.seasons() }
 
 
 class TVDBScrapper():
@@ -139,6 +148,8 @@ class TMDBScrapper():
             season_data = [ x.strip() for x in season_wrapper.text_content().split("\n") ]
             season_data = [ x for x in season_data if x ]
 
+            debug("SEASON DATA", season_data)
+
             if season_data[0].startswith("Specials"):
                 continue
 
@@ -160,6 +171,7 @@ class TMDBScrapper():
 
 
 parser = ArgumentParser()
+parser.add_argument("--debug", "-D", action="store_true")
 parser.add_argument("--plex", "-P", help="HOST:PORT", required=True, metavar="HOST:PORT")
 parser.add_argument("--ipy", help="Run ipython at the end", action="store_true")
 parser.add_argument("--int", "-I", help="Use internacional naming (e.g sXXeYY) ", action="store_true")
@@ -210,10 +222,10 @@ elif args.diff:
                 all_seasons_ok = False
                 continue
 
-            db_eps = list(range(1, db_epcount))
+            db_eps = list(range(1, db_epcount+1))
 
             plex_eps = plex_seasons[db_idx]
-            #diff = db_eps - plex_eps
+            debug("DIFF", db_eps, plex_eps)
             diff = [ x for x in db_eps if x not in plex_eps ]
             if diff:
                 missing = ", ".join([ epstr(db_idx, x, eur=not args.int) for x in diff])
